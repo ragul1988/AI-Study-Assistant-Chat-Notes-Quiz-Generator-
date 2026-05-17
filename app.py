@@ -4,10 +4,10 @@ from PyPDF2 import PdfReader
 import time
 
 st.set_page_config(page_title="AI Study Assistant", layout="centered")
-st.title("📚 AI Study Assistant (Stable HF Version)")
+st.title("📚 AI Study Assistant (Production Version)")
 
 # =========================
-# LOAD TOKEN SAFELY
+# LOAD TOKEN
 # =========================
 try:
     HF_TOKEN = st.secrets["HF_TOKEN"]
@@ -16,7 +16,7 @@ except:
     st.stop()
 
 # =========================
-# LOAD CLIENT
+# INIT CLIENT
 # =========================
 @st.cache_resource
 def load_client():
@@ -25,7 +25,7 @@ def load_client():
 client = load_client()
 
 # =========================
-# FILE INPUT
+# INPUT HANDLING
 # =========================
 uploaded_file = st.file_uploader("Upload PDF (optional)", type=["pdf"])
 text_data = ""
@@ -42,7 +42,7 @@ manual_text = st.text_area("Or paste your notes here:")
 if manual_text:
     text_data = manual_text
 
-# Limit size (important for stability)
+# Limit input size (critical)
 text_data = text_data[:3000]
 
 # =========================
@@ -54,19 +54,20 @@ option = st.selectbox(
 )
 
 # =========================
-# STABLE GENERATION FUNCTION
+# PRODUCTION GENERATOR
 # =========================
 def generate_response(prompt):
     models = [
-        "google/flan-t5-base",   # primary
-        "google/flan-t5-small"   # fallback
+        "google/flan-t5-small",              # fastest + stable
+        "google/flan-t5-base",               # fallback
+        "mistralai/Mistral-7B-Instruct-v0.1" # strong fallback
     ]
 
     for model in models:
-        for attempt in range(3):  # retry 3 times
+        for attempt in range(3):  # retry loop
             try:
                 response = client.text_generation(
-                    prompt,
+                    prompt=prompt,
                     model=model,
                     max_new_tokens=200,
                 )
@@ -75,15 +76,15 @@ def generate_response(prompt):
             except Exception as e:
                 error_msg = str(e)
 
-                # Retry on temporary errors
+                # Retry for temporary failures
                 if "503" in error_msg or "timeout" in error_msg.lower():
                     time.sleep(2)
                     continue
 
-                # Try next model if failed
+                # Try next model
                 break
 
-    return "❌ Failed to generate response. Please try again."
+    return "❌ All models failed. Please try again later."
 
 # =========================
 # ASK QUESTION
@@ -97,7 +98,7 @@ if option == "Ask Question":
 
 Question: {query}
 
-Answer clearly:"""
+Answer clearly and concisely:"""
 
         with st.spinner("Thinking..."):
             result = generate_response(prompt)
@@ -113,7 +114,7 @@ elif option == "Summarize":
         if not text_data.strip():
             st.warning("Please upload or enter some text.")
         else:
-            prompt = f"""Summarize the following content:
+            prompt = f"""Summarize the following content clearly:
 
 {text_data}
 """
@@ -137,6 +138,7 @@ elif option == "Generate Quiz":
 {text_data}
 
 Generate 5 quiz questions with answers.
+Make them clear and useful for learning.
 """
 
             with st.spinner("Creating quiz..."):
