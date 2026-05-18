@@ -100,6 +100,8 @@ def parse_quiz(text):
         questions.append(current_q)
 
     return questions
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
 # =========================
 # TABS
@@ -110,9 +112,24 @@ tab1, tab2, tab3 = st.tabs(["💬 Chat", "📄 Summary", "🧠 Quiz"])
 # CHAT
 # =========================
 with tab1:
-    query = st.text_input("Ask something from the document")
+    st.subheader("💬 Chat with your document")
+
+    # display chat history
+    for msg in st.session_state.chat_history:
+        if msg["role"] == "user":
+            st.markdown(f"**🧑 You:** {msg['content']}")
+        else:
+            st.markdown(f"**🤖 AI:** {msg['content']}")
+
+    query = st.text_input("Ask something...", key="chat_input")
 
     if query:
+        # add user message
+        st.session_state.chat_history.append({
+            "role": "user",
+            "content": query
+        })
+
         prompt = f"""
         Answer clearly based on the document.
 
@@ -131,10 +148,20 @@ with tab1:
             result = ask_ai(prompt)
 
         if result:
-            st.markdown(result)
+            st.session_state.chat_history.append({
+                "role": "assistant",
+                "content": result
+            })
         else:
-            st.error("❌ Failed to generate answer")
+            st.session_state.chat_history.append({
+                "role": "assistant",
+                "content": "❌ Failed to generate answer"
+            })
 
+        st.rerun()
+    if st.button("🗑 Clear Chat"):
+    st.session_state.chat_history = []
+    st.rerun()
 # =========================
 # SUMMARY
 # =========================
