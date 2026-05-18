@@ -20,7 +20,7 @@ AIDocMind is an AI-powered tool to:
 Built using Groq API and Streamlit.
 """)
 st.markdown(
-    '<meta name="google-site-verification" content="abc123" />',
+    '<meta name="google-site-verification" content="Mu8rC5XZL81f9FC9zeef-Mx3hYHJPskC1s8ojYtAr2I" />',
     unsafe_allow_html=True
 )
 # =========================
