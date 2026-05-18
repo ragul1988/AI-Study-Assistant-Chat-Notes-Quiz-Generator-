@@ -6,8 +6,9 @@ from groq import Groq
 # PAGE
 # =========================
 st.set_page_config(page_title="AI Study Assistant", layout="centered")
-st.title("📚 Doc Mind)")
-
+st.title("📚 Doc Mind")
+st.subheader("Your Personal AI Study Assistant")
+st.caption("Upload a PDF to get instant answers, summaries, and interactive quizzes powered by AI.")
 # =========================
 # LOAD GROQ
 # =========================
