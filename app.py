@@ -1,44 +1,22 @@
 import streamlit as st
 import google.generativeai as genai
 from PyPDF2 import PdfReader
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 st.set_page_config(page_title="AI Study Assistant", layout="centered")
-st.title("💬 AI Study Assistant")
+st.title("📚 AI Study Assistant")
 
 # =========================
 # LOAD API KEY
 # =========================
 try:
-    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 except:
-    st.error("❌ Gemini API key missing.")
+    st.error("❌ Add GEMINI_API_KEY in Streamlit secrets")
     st.stop()
 
-genai.configure(api_key=GEMINI_API_KEY)
-
-# =========================
-# LOAD MODEL
-# =========================
-available_models = [
-    m.name for m in genai.list_models()
-    if "generateContent" in m.supported_generation_methods
-]
-
-if not available_models:
-    st.error("❌ No compatible models found.")
-    st.stop()
-
-model = genai.GenerativeModel(available_models[0])
-
-# =========================
-# SESSION STATE
-# =========================
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-
-# Clear chat
-if st.button("🗑 Clear Chat"):
-    st.session_state.chat_history = []
+model = genai.GenerativeModel("models/gemini-1.5-flash")
 
 # =========================
 # FILE INPUT
@@ -54,173 +32,167 @@ if uploaded_file:
         if content:
             text_data += content
 
-# limit size
 text_data = text_data[:20000]
 
 # =========================
-# MODE SELECTOR
+# RAG FUNCTIONS
 # =========================
-mode = st.radio(
-    "Choose Mode",
-    ["💬 Chat", "❓ Ask Question", "📄 Summarize", "🧠 Generate Quiz"]
-)
-
-# =========================
-# UTIL FUNCTIONS
-# =========================
-def split_text(text, chunk_size=1000):
+def split_chunks(text, chunk_size=500):
     return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
 
-def summarize_large_pdf(text):
-    chunks = split_text(text)
-    summaries = []
+def build_index(chunks):
+    vectorizer = TfidfVectorizer()
+    vectors = vectorizer.fit_transform(chunks)
+    return vectorizer, vectors
 
-    # Step 1: Summarize chunks
-    for chunk in chunks[:4]:  # reduce chunks (important)
-        prompt = f"""
-        Summarize this in 3-5 bullet points:
+def retrieve_chunks(query, chunks, vectorizer, vectors):
+    query_vec = vectorizer.transform([query])
+    scores = cosine_similarity(query_vec, vectors).flatten()
+    top_indices = scores.argsort()[-3:][::-1]
+    return " ".join([chunks[i] for i in top_indices])
 
-        {chunk}
-        """
+# Build index
+if text_data:
+    chunks = split_chunks(text_data)
+    vectorizer, vectors = build_index(chunks)
 
+# =========================
+# PARSE QUIZ
+# =========================
+def parse_quiz(text):
+    questions = text.split("Q")[1:]
+    quiz_data = []
+
+    for q in questions:
         try:
-            response = model.generate_content(prompt)
-            if response.text:
-                summaries.append(response.text)
+            lines = q.strip().split("\n")
+            question = "Q" + lines[0]
+
+            options = []
+            answer = ""
+
+            for line in lines[1:]:
+                if line.startswith(("A)", "B)", "C)", "D)")):
+                    options.append(line)
+                if "Answer" in line:
+                    answer = line.split(":")[-1].strip()
+
+            quiz_data.append({
+                "question": question,
+                "options": options,
+                "answer": answer
+            })
         except:
             continue
 
-    # Step 2: If no summaries
-    if not summaries:
-        return "❌ Could not summarize document."
-
-    # Step 3: Combine safely (shorten input)
-    combined = "\n".join(summaries[:4])  # limit size
-
-    final_prompt = f"""
-    Create a short final summary from these points:
-
-    {combined}
-    """
-
-    try:
-        final = model.generate_content(final_prompt)
-        return final.text if final.text else "⚠️ Empty summary"
-    except Exception as e:
-        return f"❌ Final summary failed: {str(e)}"
-    return "\n\n".join(summaries)
-
-def generate_quiz(text):
-    prompt = f"""
-    Generate 5 quiz questions with answers.
-
-    Format:
-    Q1:
-    A:
-
-    Content:
-    {text[:8000]}
-    """
-    try:
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        return f"❌ Error: {str(e)}"
+    return quiz_data
 
 # =========================
-# ASK QUESTION
+# UI TABS
 # =========================
-if mode == "❓ Ask Question":
-    question = st.text_input("Ask a question")
+tab1, tab2, tab3 = st.tabs(["💬 Chat (RAG)", "📄 Summary", "🧠 Quiz"])
 
-    if question:
+# =========================
+# CHAT (RAG)
+# =========================
+with tab1:
+    query = st.text_input("Ask something from the document")
+
+    if query and text_data:
+        context = retrieve_chunks(query, chunks, vectorizer, vectors)
+
         prompt = f"""
-        Answer based on document:
+        Answer using this context:
 
-        {text_data[:8000]}
+        {context}
 
         Question:
-        {question}
+        {query}
         """
 
         with st.spinner("Thinking..."):
-            result = model.generate_content(prompt)
-
-        st.subheader("📌 Answer")
-        st.write(result.text)
+            try:
+                response = model.generate_content(prompt)
+                st.write(response.text)
+            except Exception as e:
+                st.error(e)
 
 # =========================
-# SUMMARIZE
+# SUMMARY
 # =========================
-elif mode == "📄 Summarize":
-    if st.button("Summarize Document"):
-        if not text_data.strip():
-            st.warning("Upload PDF first.")
+with tab2:
+    if st.button("Generate Summary"):
+        if not text_data:
+            st.warning("Upload a PDF first")
         else:
+            prompt = f"Summarize this document:\n{text_data[:8000]}"
+
             with st.spinner("Summarizing..."):
-                result = summarize_large_pdf(text_data)
-
-            st.subheader("📄 Summary")
-            st.write(result)
-
-# =========================
-# QUIZ
-# =========================
-elif mode == "🧠 Generate Quiz":
-    if st.button("Generate Quiz"):
-        if not text_data.strip():
-            st.warning("Upload PDF first.")
-        else:
-            with st.spinner("Generating quiz..."):
-                result = generate_quiz(text_data)
-
-            st.subheader("🧠 Quiz")
-            st.write(result)
-
-# =========================
-# CHAT MODE
-# =========================
-elif mode == "💬 Chat":
-
-    # display history
-    for msg in st.session_state.chat_history:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
-
-    user_input = st.chat_input("Ask something...")
-
-    if user_input:
-
-        st.session_state.chat_history.append(
-            {"role": "user", "content": user_input}
-        )
-
-        with st.chat_message("user"):
-            st.write(user_input)
-
-        conversation = ""
-        for msg in st.session_state.chat_history[-5:]:
-            conversation += f"{msg['role']}: {msg['content']}\n"
-
-        prompt = f"""
-        Answer using document:
-
-        {text_data}
-
-        Conversation:
-        {conversation}
-        """
-
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
                 try:
                     response = model.generate_content(prompt)
-                    reply = response.text
+                    st.write(response.text)
                 except Exception as e:
-                    reply = f"❌ Error: {str(e)}"
+                    st.error(e)
 
-            st.write(reply)
+# =========================
+# QUIZ + SCORING
+# =========================
+with tab3:
 
-        st.session_state.chat_history.append(
-            {"role": "assistant", "content": reply}
-        )
+    if "quiz_data" not in st.session_state:
+        st.session_state.quiz_data = None
+    if "user_answers" not in st.session_state:
+        st.session_state.user_answers = {}
+
+    if st.button("Generate Quiz"):
+        if not text_data:
+            st.warning("Upload a PDF first")
+        else:
+            prompt = f"""
+            Create 5 MCQ questions from this:
+
+            {text_data[:8000]}
+
+            Format:
+            Q1:
+            A) ...
+            B) ...
+            C) ...
+            D) ...
+            Answer: A
+            """
+
+            with st.spinner("Generating quiz..."):
+                try:
+                    response = model.generate_content(prompt)
+                    st.session_state.quiz_data = parse_quiz(response.text)
+                except Exception as e:
+                    st.error(e)
+
+    # Display Quiz
+    if st.session_state.quiz_data:
+
+        st.subheader("🧠 Quiz")
+
+        for i, q in enumerate(st.session_state.quiz_data):
+            st.write(q["question"])
+
+            selected = st.radio(
+                "Choose answer:",
+                q["options"],
+                key=f"q{i}"
+            )
+
+            st.session_state.user_answers[i] = selected
+
+        if st.button("Submit Quiz"):
+            score = 0
+
+            for i, q in enumerate(st.session_state.quiz_data):
+                selected = st.session_state.user_answers.get(i, "")
+                correct = q["answer"]
+
+                if selected.startswith(correct):
+                    score += 1
+
+            st.success(f"🏆 Score: {score} / {len(st.session_state.quiz_data)}")
