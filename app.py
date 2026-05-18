@@ -1,37 +1,21 @@
 import streamlit as st
 from PyPDF2 import PdfReader
-import re
-import random
+from groq import Groq
 
 # =========================
 # PAGE SETUP
 # =========================
 st.set_page_config(page_title="AI Study Assistant", layout="centered")
-st.title("📚 AI Study Assistant")
+st.title("📚 AI Study Assistant (Groq AI)")
 
 # =========================
-# AI TOGGLE
+# LOAD GROQ
 # =========================
-use_ai = st.toggle("⚡ Use AI (better answers, uses API)", value=False)
-
-# =========================
-# LOAD AI (OPTIONAL)
-# =========================
-model = None
-if use_ai:
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-
-        @st.cache_resource
-        def load_model():
-            return genai.GenerativeModel("models/gemini-1.5-flash")
-
-        model = load_model()
-
-    except:
-        st.warning("⚠️ AI unavailable → using offline mode")
-        use_ai = False
+try:
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+except:
+    st.error("❌ Add GROQ_API_KEY in Streamlit secrets")
+    st.stop()
 
 # =========================
 # FILE UPLOAD
@@ -41,159 +25,36 @@ uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
 text_data = ""
 
 if uploaded_file:
-    pdf = PdfReader(uploaded_file)
-    for page in pdf.pages:
-        text = page.extract_text()
-        if text:
-            text_data += text
+    with st.spinner("Reading PDF..."):
+        pdf = PdfReader(uploaded_file)
+        for page in pdf.pages:
+            text = page.extract_text()
+            if text:
+                text_data += text
 
-text_data = text_data[:10000]
+text_data = text_data[:8000]
 
 if not text_data.strip():
     st.info("📄 Upload a PDF to start")
     st.stop()
 
 # =========================
-# TEXT PROCESSING
+# AI FUNCTION
 # =========================
-def preprocess(text):
-    return re.findall(r'\b\w+\b', text.lower())
-
-sentences = [s.strip() for s in text_data.split(".") if len(s) > 20]
-
-# =========================
-# SMART OFFLINE ANSWER
-# =========================
-def smart_answer(query):
-    query_words = set(preprocess(query))
-
-    scored_sentences = []
-
-    for sentence in sentences:
-        words = set(preprocess(sentence))
-
-        overlap = len(query_words & words)
-        density = overlap / (len(words) + 1)
-        score = overlap + density
-
-        # filter junk
-        if len(sentence) < 20:
-            continue
-        if sentence.isupper():
-            continue
-
-        scored_sentences.append((score, sentence.strip()))
-
-    # sort by relevance
-    scored_sentences.sort(reverse=True)
-
-    # take top 3 sentences
-    top_sentences = [s for _, s in scored_sentences[:3]]
-
-    if not top_sentences:
-        return "❌ No relevant answer found."
-
-    combined = " ".join(top_sentences)
-
-    return f"""
-### 📌 Answer
-{combined}
-
----
-
-### 📌 Answer
-{best_sentence.strip()}
-
----
-
-### 💡 Explanation
-This answer is based on relevant content related to: **{keywords}**.
-
----
-
-### 🧠 Insight
-The document highlights this concept as important and directly relevant to your question.
-"""
-
-# =========================
-# SUMMARY
-# =========================
-def smart_summary():
-    scored = []
-
-    for s in sentences:
-        words = preprocess(s)
-        score = len(set(words))
-        scored.append((score, s))
-
-    scored.sort(reverse=True)
-
-    top = [s for _, s in scored[:5]]
-
-    result = "### 📄 Summary\n\n"
-    for s in top:
-        result += f"- {s.strip()}\n"
-
-    result += "\n---\n### 🧠 Key Takeaway\nThis document emphasizes the main concepts listed above."
-
-    return result
-
-# =========================
-# QUIZ
-# =========================
-def generate_quiz():
-    quiz = []
-
-    stop_words = {"the", "of", "in", "and", "to", "a", "is", "for"}
-
-    for i, s in enumerate(sentences[:5]):
-        words = s.split()
-
-        # filter meaningful words
-        keywords = [
-            w for w in words
-            if len(w) > 4 and w.lower() not in stop_words
-        ]
-
-        if len(keywords) < 1:
-            continue
-
-        # pick a meaningful keyword
-        answer = keywords[0]
-
-        # generate better distractors
-        distractors = []
-        for other in sentences:
-            for w in other.split():
-                if len(w) > 4 and w.lower() not in stop_words and w != answer:
-                    distractors.append(w)
-
-        options = list(set([answer] + distractors[:10]))[:4]
-
-        if len(options) < 4:
-            continue
-
-        random.shuffle(options)
-
-        question = s.replace(answer, "_____")
-
-        quiz.append({
-            "question": f"Q{i+1}: {question}",
-            "options": options,
-            "answer": answer
-        })
-
-    return quiz
-
-# =========================
-# SAFE AI
-# =========================
-def safe_ai(prompt):
+def ask_ai(prompt):
     try:
-        response = model.generate_content(prompt)
-        return response.text
-    except:
-        return None
+        response = client.chat.completions.create(
+            model="llama3-70b-8192",
+            messages=[
+                {"role": "system", "content": "You are a helpful AI study assistant."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+
+        return response.choices[0].message.content
+
+    except Exception as e:
+        return f"❌ Error: {str(e)}"
 
 # =========================
 # UI TABS
@@ -207,64 +68,92 @@ with tab1:
     query = st.text_input("Ask something from the document")
 
     if query:
-        if use_ai:
-            context = smart_answer(query)
+        prompt = f"""
+        Answer clearly based on the document.
 
-            prompt = f"""
-            Improve this answer:
+        DOCUMENT:
+        {text_data}
 
-            {context}
-            """
+        QUESTION:
+        {query}
 
-            with st.spinner("Thinking..."):
-                result = safe_ai(prompt)
+        Give:
+        - Clear answer
+        - Short explanation
+        """
 
-            if result:
-                st.markdown(result)
-            else:
-                st.warning("⚠️ AI failed → showing offline answer")
-                st.markdown(context)
+        with st.spinner("Thinking..."):
+            result = ask_ai(prompt)
 
-        else:
-            st.markdown(smart_answer(query))
+        st.markdown(result)
 
 # =========================
 # SUMMARY
 # =========================
 with tab2:
     if st.button("Generate Summary"):
-        if use_ai:
-            prompt = f"Summarize:\n{text_data[:4000]}"
+        prompt = f"""
+        Summarize the following document in clear bullet points:
 
-            with st.spinner("Summarizing..."):
-                result = safe_ai(prompt)
+        {text_data}
+        """
 
-            if result:
-                st.markdown(result)
-            else:
-                st.warning("⚠️ AI failed → offline summary")
-                st.markdown(smart_summary())
+        with st.spinner("Summarizing..."):
+            result = ask_ai(prompt)
 
-        else:
-            st.markdown(smart_summary())
+        st.markdown(result)
 
 # =========================
 # QUIZ + SCORING
 # =========================
 with tab3:
 
-    if "quiz" not in st.session_state:
-        st.session_state.quiz = None
-    if "answers" not in st.session_state:
-        st.session_state.answers = {}
+    if "quiz_text" not in st.session_state:
+        st.session_state.quiz_text = None
 
     if st.button("Generate Quiz"):
-        st.session_state.quiz = generate_quiz()
+        prompt = f"""
+        Create 5 multiple choice questions.
 
-    if st.session_state.quiz:
+        Format strictly:
+        Q1:
+        A)
+        B)
+        C)
+        D)
+        Answer: A
+
+        Based on:
+        {text_data}
+        """
+
+        with st.spinner("Generating quiz..."):
+            st.session_state.quiz_text = ask_ai(prompt)
+
+    if st.session_state.quiz_text:
         st.subheader("🧠 Quiz")
 
-        for i, q in enumerate(st.session_state.quiz):
+        quiz_lines = st.session_state.quiz_text.split("\n")
+
+        questions = []
+        current_q = {}
+
+        for line in quiz_lines:
+            if line.startswith("Q"):
+                if current_q:
+                    questions.append(current_q)
+                current_q = {"question": line, "options": [], "answer": ""}
+            elif line.startswith(("A)", "B)", "C)", "D)")):
+                current_q["options"].append(line)
+            elif "Answer" in line:
+                current_q["answer"] = line.split(":")[-1].strip()
+
+        if current_q:
+            questions.append(current_q)
+
+        user_answers = {}
+
+        for i, q in enumerate(questions):
             st.markdown(f"### {q['question']}")
 
             selected = st.radio(
@@ -273,23 +162,23 @@ with tab3:
                 key=f"q{i}"
             )
 
-            st.session_state.answers[i] = selected
+            user_answers[i] = selected
 
         if st.button("Submit Quiz"):
             score = 0
 
-            for i, q in enumerate(st.session_state.quiz):
-                if st.session_state.answers.get(i) == q["answer"]:
+            for i, q in enumerate(questions):
+                if user_answers[i].startswith(q["answer"]):
                     score += 1
 
-            total = len(st.session_state.quiz)
+            total = len(questions)
             percent = (score / total) * 100
 
-            st.success(f"🏆 Score: {score} / {total} ({percent:.0f}%)")
+            st.success(f"🏆 Score: {score}/{total} ({percent:.0f}%)")
 
             if percent >= 80:
-                st.markdown("🔥 **Excellent understanding!**")
+                st.markdown("🔥 Excellent!")
             elif percent >= 50:
-                st.markdown("👍 **Good job, keep improving.**")
+                st.markdown("👍 Good job!")
             else:
-                st.markdown("📚 **Review the material again.**")
+                st.markdown("📚 Review the material again.")
