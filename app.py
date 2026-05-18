@@ -1,20 +1,36 @@
 import streamlit as st
-import google.generativeai as genai
 from PyPDF2 import PdfReader
+import random
 
+# =========================
+# PAGE SETUP
+# =========================
 st.set_page_config(page_title="AI Study Assistant", layout="centered")
 st.title("📚 AI Study Assistant")
 
 # =========================
-# LOAD API KEY
+# MODE SWITCH
 # =========================
-try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-except:
-    st.error("❌ Add GEMINI_API_KEY in Streamlit secrets")
-    st.stop()
+use_ai = st.toggle("⚡ Use AI (better answers, uses quota)", value=False)
 
-model = genai.GenerativeModel("models/gemini-2.5-flash")
+# =========================
+# LOAD AI (OPTIONAL)
+# =========================
+model = None
+if use_ai:
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+
+        @st.cache_resource
+        def load_model():
+            return genai.GenerativeModel("models/gemini-1.5-flash")
+
+        model = load_model()
+
+    except:
+        st.warning("⚠️ AI not available. Switching to offline mode.")
+        use_ai = False
 
 # =========================
 # FILE UPLOAD
@@ -30,56 +46,70 @@ if uploaded_file:
         if text:
             text_data += text
 
-# limit size for speed
-text_data = text_data[:8000]
+text_data = text_data[:10000]
 
 if not text_data.strip():
     st.info("📄 Upload a PDF to start")
     st.stop()
 
 # =========================
-# SIMPLE CONTEXT SEARCH (LIGHT RAG)
+# OFFLINE FUNCTIONS
 # =========================
-def simple_search(query, text):
+def simple_qa(query, text):
     sentences = text.split(".")
-    matches = []
+    best = ""
+    max_score = 0
+
+    q_words = set(query.lower().split())
 
     for sentence in sentences:
-        if any(word.lower() in sentence.lower() for word in query.split()):
-            matches.append(sentence)
+        s_words = set(sentence.lower().split())
+        score = len(q_words & s_words)
 
-    return " ".join(matches[:3])
+        if score > max_score:
+            max_score = score
+            best = sentence
 
-# =========================
-# QUIZ PARSER
-# =========================
-def parse_quiz(text):
-    questions = text.split("Q")[1:]
-    quiz_data = []
+    return best if best else "❌ Answer not found"
 
-    for q in questions:
-        try:
-            lines = q.strip().split("\n")
-            question = "Q" + lines[0]
+def simple_summary(text):
+    sentences = text.split(".")
+    return ". ".join(sentences[:8])
 
-            options = []
-            answer = ""
+def generate_quiz(text):
+    sentences = text.split(".")
+    quiz = []
 
-            for line in lines[1:]:
-                if line.startswith(("A)", "B)", "C)", "D)")):
-                    options.append(line)
-                if "Answer" in line:
-                    answer = line.split(":")[-1].strip()
+    for i, s in enumerate(sentences[:5]):
+        words = s.split()
+        if len(words) > 6:
+            answer = words[len(words)//2]
 
-            quiz_data.append({
-                "question": question,
+            options = [answer]
+            while len(options) < 4:
+                w = random.choice(words)
+                if w not in options:
+                    options.append(w)
+
+            random.shuffle(options)
+
+            quiz.append({
+                "question": f"Q{i+1}: {s.replace(answer, '_____')}",
                 "options": options,
                 "answer": answer
             })
-        except:
-            continue
 
-    return quiz_data
+    return quiz
+
+# =========================
+# SAFE AI CALL
+# =========================
+def safe_ai(prompt):
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+    except:
+        return None
 
 # =========================
 # UI TABS
@@ -93,76 +123,93 @@ with tab1:
     query = st.text_input("Ask something from the document")
 
     if query:
-        context = simple_search(query, text_data)
+        if use_ai:
+            prompt = f"""
+            Answer based on this document:
 
-        prompt = f"""
-        Answer using this context:
+            {text_data[:4000]}
 
-        {context}
+            Question:
+            {query}
+            """
 
-        Question:
-        {query}
-        """
+            with st.spinner("Thinking..."):
+                result = safe_ai(prompt)
 
-        with st.spinner("Thinking..."):
-            try:
-                response = model.generate_content(prompt)
-                st.write(response.text)
-            except Exception as e:
-                st.error(f"❌ Error: {e}")
+            if result:
+                st.write(result)
+            else:
+                st.warning("⚠️ AI failed → showing offline result")
+                st.write(simple_qa(query, text_data))
+
+        else:
+            st.write(simple_qa(query, text_data))
 
 # =========================
 # SUMMARY
 # =========================
 with tab2:
     if st.button("Generate Summary"):
-        prompt = f"Summarize this:\n{text_data}"
 
-        with st.spinner("Summarizing..."):
-            try:
-                response = model.generate_content(prompt)
-                st.write(response.text)
-            except Exception as e:
-                st.error(f"❌ Error: {e}")
+        if use_ai:
+            prompt = f"Summarize:\n{text_data[:4000]}"
+
+            with st.spinner("Summarizing..."):
+                result = safe_ai(prompt)
+
+            if result:
+                st.write(result)
+            else:
+                st.warning("⚠️ AI failed → offline summary")
+                st.write(simple_summary(text_data))
+
+        else:
+            st.write(simple_summary(text_data))
 
 # =========================
 # QUIZ + SCORING
 # =========================
 with tab3:
 
-    if "quiz_data" not in st.session_state:
-        st.session_state.quiz_data = None
-    if "user_answers" not in st.session_state:
-        st.session_state.user_answers = {}
+    if "quiz" not in st.session_state:
+        st.session_state.quiz = None
+    if "answers" not in st.session_state:
+        st.session_state.answers = {}
 
     if st.button("Generate Quiz"):
-        prompt = f"""
-        Create 5 MCQ questions.
 
-        Format:
-        Q1:
-        A)
-        B)
-        C)
-        D)
-        Answer: A
+        if use_ai:
+            prompt = f"""
+            Create 5 MCQ questions.
 
-        Content:
-        {text_data}
-        """
+            Format:
+            Q1:
+            A)
+            B)
+            C)
+            D)
+            Answer: A
 
-        with st.spinner("Generating quiz..."):
-            try:
-                response = model.generate_content(prompt)
-                st.session_state.quiz_data = parse_quiz(response.text)
-            except Exception as e:
-                st.error(f"❌ Error: {e}")
+            Content:
+            {text_data[:4000]}
+            """
 
-    if st.session_state.quiz_data:
+            with st.spinner("Generating quiz..."):
+                result = safe_ai(prompt)
 
+            if result:
+                st.session_state.quiz = generate_quiz(text_data)  # fallback structure
+            else:
+                st.warning("⚠️ AI failed → offline quiz")
+                st.session_state.quiz = generate_quiz(text_data)
+
+        else:
+            st.session_state.quiz = generate_quiz(text_data)
+
+    if st.session_state.quiz:
         st.subheader("🧠 Quiz")
 
-        for i, q in enumerate(st.session_state.quiz_data):
+        for i, q in enumerate(st.session_state.quiz):
             st.write(q["question"])
 
             selected = st.radio(
@@ -171,16 +218,13 @@ with tab3:
                 key=f"q{i}"
             )
 
-            st.session_state.user_answers[i] = selected
+            st.session_state.answers[i] = selected
 
         if st.button("Submit Quiz"):
             score = 0
 
-            for i, q in enumerate(st.session_state.quiz_data):
-                selected = st.session_state.user_answers.get(i, "")
-                correct = q["answer"]
-
-                if selected.startswith(correct):
+            for i, q in enumerate(st.session_state.quiz):
+                if st.session_state.answers.get(i) == q["answer"]:
                     score += 1
 
-            st.success(f"🏆 Score: {score} / {len(st.session_state.quiz_data)}")
+            st.success(f"🏆 Score: {score} / {len(st.session_state.quiz)}")
