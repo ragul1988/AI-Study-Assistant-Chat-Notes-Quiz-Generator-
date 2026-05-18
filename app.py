@@ -54,7 +54,7 @@ def generate_response(prompt):
     }
 
     data = {
-        "model": "mistralai/mistral-7b-instruct",
+        "model": "openchat/openchat-3.5",  # stable free model
         "messages": [
             {"role": "user", "content": prompt}
         ]
@@ -64,11 +64,21 @@ def generate_response(prompt):
         response = requests.post(url, headers=headers, json=data)
         result = response.json()
 
-        return result["choices"][0]["message"]["content"]
+        # 🔍 DEBUG (keep temporarily)
+        st.write("API Response:", result)
+
+        # ✅ Correct extraction
+        if "choices" in result:
+            return result["choices"][0]["message"]["content"]
+
+        elif "error" in result:
+            return f"❌ API Error: {result['error']['message']}"
+
+        else:
+            return "❌ Unexpected response format."
 
     except Exception as e:
-        return f"❌ Error: {str(e)}"
-
+        return f"❌ Exception: {str(e)}"
 # =========================
 # ASK QUESTION
 # =========================
@@ -95,9 +105,9 @@ Answer clearly:"""
 elif option == "Summarize":
     if st.button("Generate Summary"):
         if not text_data.strip():
-            st.warning("Please enter text.")
+            st.warning("Please upload or enter some text.")
         else:
-            prompt = f"""Summarize this:
+            prompt = f"""Summarize this content clearly:
 
 {text_data}
 """
@@ -107,7 +117,6 @@ elif option == "Summarize":
 
             st.subheader("📄 Summary")
             st.write(result)
-
 # =========================
 # QUIZ
 # =========================
