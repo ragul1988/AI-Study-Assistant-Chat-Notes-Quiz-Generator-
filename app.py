@@ -1,8 +1,6 @@
 import streamlit as st
 import google.generativeai as genai
 from PyPDF2 import PdfReader
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 
 st.set_page_config(page_title="AI Study Assistant", layout="centered")
 st.title("📚 AI Study Assistant")
@@ -19,7 +17,7 @@ except:
 model = genai.GenerativeModel("models/gemini-1.5-flash")
 
 # =========================
-# FILE INPUT
+# FILE UPLOAD
 # =========================
 uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
 
@@ -28,47 +26,32 @@ text_data = ""
 if uploaded_file:
     pdf = PdfReader(uploaded_file)
     for page in pdf.pages:
-        content = page.extract_text()
-        if content:
-            text_data += content
+        text = page.extract_text()
+        if text:
+            text_data += text
 
-# Limit size (important)
-text_data = text_data[:15000]
+# limit size for speed
+text_data = text_data[:8000]
 
 if not text_data.strip():
-    st.info("📄 Upload a PDF to begin")
+    st.info("📄 Upload a PDF to start")
     st.stop()
 
 # =========================
-# RAG FUNCTIONS
+# SIMPLE CONTEXT SEARCH (LIGHT RAG)
 # =========================
-def split_chunks(text, chunk_size=300):
-    return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+def simple_search(query, text):
+    sentences = text.split(".")
+    matches = []
 
-def build_index(chunks):
-    vectorizer = TfidfVectorizer()
-    vectors = vectorizer.fit_transform(chunks)
-    return vectorizer, vectors
+    for sentence in sentences:
+        if any(word.lower() in sentence.lower() for word in query.split()):
+            matches.append(sentence)
 
-def retrieve_chunks(query, chunks, vectorizer, vectors):
-    query_vec = vectorizer.transform([query])
-    scores = cosine_similarity(query_vec, vectors).flatten()
-    top_indices = scores.argsort()[-2:][::-1]  # fewer chunks = faster
-    return " ".join([chunks[i] for i in top_indices])
+    return " ".join(matches[:3])
 
 # =========================
-# CACHE RAG INDEX (FIX)
-# =========================
-@st.cache_data
-def prepare_rag(text):
-    chunks = split_chunks(text)
-    vectorizer, vectors = build_index(chunks)
-    return chunks, vectorizer, vectors
-
-chunks, vectorizer, vectors = prepare_rag(text_data)
-
-# =========================
-# PARSE QUIZ
+# QUIZ PARSER
 # =========================
 def parse_quiz(text):
     questions = text.split("Q")[1:]
@@ -101,16 +84,16 @@ def parse_quiz(text):
 # =========================
 # UI TABS
 # =========================
-tab1, tab2, tab3 = st.tabs(["💬 Chat (RAG)", "📄 Summary", "🧠 Quiz"])
+tab1, tab2, tab3 = st.tabs(["💬 Chat", "📄 Summary", "🧠 Quiz"])
 
 # =========================
-# CHAT (FAST RAG)
+# CHAT
 # =========================
 with tab1:
     query = st.text_input("Ask something from the document")
 
     if query:
-        context = retrieve_chunks(query, chunks, vectorizer, vectors)[:1200]
+        context = simple_search(query, text_data)
 
         prompt = f"""
         Answer using this context:
@@ -126,14 +109,14 @@ with tab1:
                 response = model.generate_content(prompt)
                 st.write(response.text)
             except Exception as e:
-                st.error(f"❌ API Error: {e}")
+                st.error(f"❌ Error: {e}")
 
 # =========================
-# SUMMARY (LIGHT)
+# SUMMARY
 # =========================
 with tab2:
     if st.button("Generate Summary"):
-        prompt = f"Summarize this:\n{text_data[:6000]}"
+        prompt = f"Summarize this:\n{text_data}"
 
         with st.spinner("Summarizing..."):
             try:
@@ -165,7 +148,7 @@ with tab3:
         Answer: A
 
         Content:
-        {text_data[:6000]}
+        {text_data}
         """
 
         with st.spinner("Generating quiz..."):
