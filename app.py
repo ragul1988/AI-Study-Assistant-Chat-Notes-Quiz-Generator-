@@ -32,12 +32,17 @@ if uploaded_file:
         if content:
             text_data += content
 
-text_data = text_data[:20000]
+# Limit size (important)
+text_data = text_data[:15000]
+
+if not text_data.strip():
+    st.info("📄 Upload a PDF to begin")
+    st.stop()
 
 # =========================
 # RAG FUNCTIONS
 # =========================
-def split_chunks(text, chunk_size=500):
+def split_chunks(text, chunk_size=300):
     return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
 
 def build_index(chunks):
@@ -48,13 +53,19 @@ def build_index(chunks):
 def retrieve_chunks(query, chunks, vectorizer, vectors):
     query_vec = vectorizer.transform([query])
     scores = cosine_similarity(query_vec, vectors).flatten()
-    top_indices = scores.argsort()[-3:][::-1]
+    top_indices = scores.argsort()[-2:][::-1]  # fewer chunks = faster
     return " ".join([chunks[i] for i in top_indices])
 
-# Build index
-if text_data:
-    chunks = split_chunks(text_data)
+# =========================
+# CACHE RAG INDEX (FIX)
+# =========================
+@st.cache_data
+def prepare_rag(text):
+    chunks = split_chunks(text)
     vectorizer, vectors = build_index(chunks)
+    return chunks, vectorizer, vectors
+
+chunks, vectorizer, vectors = prepare_rag(text_data)
 
 # =========================
 # PARSE QUIZ
@@ -93,13 +104,13 @@ def parse_quiz(text):
 tab1, tab2, tab3 = st.tabs(["💬 Chat (RAG)", "📄 Summary", "🧠 Quiz"])
 
 # =========================
-# CHAT (RAG)
+# CHAT (FAST RAG)
 # =========================
 with tab1:
     query = st.text_input("Ask something from the document")
 
-    if query and text_data:
-        context = retrieve_chunks(query, chunks, vectorizer, vectors)
+    if query:
+        context = retrieve_chunks(query, chunks, vectorizer, vectors)[:1200]
 
         prompt = f"""
         Answer using this context:
@@ -115,24 +126,21 @@ with tab1:
                 response = model.generate_content(prompt)
                 st.write(response.text)
             except Exception as e:
-                st.error(e)
+                st.error(f"❌ API Error: {e}")
 
 # =========================
-# SUMMARY
+# SUMMARY (LIGHT)
 # =========================
 with tab2:
     if st.button("Generate Summary"):
-        if not text_data:
-            st.warning("Upload a PDF first")
-        else:
-            prompt = f"Summarize this document:\n{text_data[:8000]}"
+        prompt = f"Summarize this:\n{text_data[:6000]}"
 
-            with st.spinner("Summarizing..."):
-                try:
-                    response = model.generate_content(prompt)
-                    st.write(response.text)
-                except Exception as e:
-                    st.error(e)
+        with st.spinner("Summarizing..."):
+            try:
+                response = model.generate_content(prompt)
+                st.write(response.text)
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
 
 # =========================
 # QUIZ + SCORING
@@ -145,31 +153,28 @@ with tab3:
         st.session_state.user_answers = {}
 
     if st.button("Generate Quiz"):
-        if not text_data:
-            st.warning("Upload a PDF first")
-        else:
-            prompt = f"""
-            Create 5 MCQ questions from this:
+        prompt = f"""
+        Create 5 MCQ questions.
 
-            {text_data[:8000]}
+        Format:
+        Q1:
+        A)
+        B)
+        C)
+        D)
+        Answer: A
 
-            Format:
-            Q1:
-            A) ...
-            B) ...
-            C) ...
-            D) ...
-            Answer: A
-            """
+        Content:
+        {text_data[:6000]}
+        """
 
-            with st.spinner("Generating quiz..."):
-                try:
-                    response = model.generate_content(prompt)
-                    st.session_state.quiz_data = parse_quiz(response.text)
-                except Exception as e:
-                    st.error(e)
+        with st.spinner("Generating quiz..."):
+            try:
+                response = model.generate_content(prompt)
+                st.session_state.quiz_data = parse_quiz(response.text)
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
 
-    # Display Quiz
     if st.session_state.quiz_data:
 
         st.subheader("🧠 Quiz")
