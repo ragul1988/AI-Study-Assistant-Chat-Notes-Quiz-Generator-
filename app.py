@@ -14,7 +14,7 @@ except:
     st.error("❌ Add GEMINI_API_KEY in Streamlit secrets")
     st.stop()
 
-model = genai.GenerativeModel("models/gemini-1.5-flash")
+model = genai.GenerativeModel("models/gemini-2.5-flash")
 
 # =========================
 # FILE UPLOAD
