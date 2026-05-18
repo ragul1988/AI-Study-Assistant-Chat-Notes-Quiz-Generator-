@@ -3,12 +3,8 @@ import google.generativeai as genai
 from PyPDF2 import PdfReader
 
 st.set_page_config(page_title="AI Study Assistant", layout="centered")
-st.title("📚 AI Study Assistant (Debug Version)")
 
-# =========================
-# DEBUG TOGGLE
-# =========================
-debug_mode = st.checkbox("Enable Debug Mode")
+st.title("💬 AI Study Assistant (Chat Mode)")
 
 # =========================
 # LOAD API KEY
@@ -22,35 +18,21 @@ except:
 genai.configure(api_key=GEMINI_API_KEY)
 
 # =========================
-# LIST AVAILABLE MODELS (DEBUG)
+# LOAD MODEL (AUTO)
 # =========================
-# =========================
-# GET WORKING MODELS
-# =========================
-available_models = []
+available_models = [
+    m.name for m in genai.list_models()
+    if "generateContent" in m.supported_generation_methods
+]
 
-try:
-    for m in genai.list_models():
-        if "generateContent" in m.supported_generation_methods:
-            available_models.append(m.name)
-except Exception as e:
-    st.error(f"Error fetching models: {e}")
+model = genai.GenerativeModel(available_models[0])
 
 # =========================
-# SELECT MODEL (DYNAMIC)
+# SESSION STATE (MEMORY)
 # =========================
-if available_models:
-    selected_model = st.selectbox("Select Model", available_models)
-else:
-    st.error("No compatible models found.")
-    st.stop()
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
-# Load model
-try:
-    model = genai.GenerativeModel(selected_model)
-except Exception as e:
-    st.error(f"Model Load Error: {e}")
-    st.stop()
 # =========================
 # PDF INPUT
 # =========================
@@ -65,98 +47,60 @@ if uploaded_file:
         if content:
             text_data += content
 
-manual_text = st.text_area("Or paste your notes here:")
-
-if manual_text:
-    text_data = manual_text
-
-text_data = text_data[:10000]
+text_data = text_data[:8000]
 
 # =========================
-# ACTIONS
+# DISPLAY CHAT HISTORY
 # =========================
-option = st.selectbox(
-    "Choose Action",
-    ["Ask Question", "Summarize", "Generate Quiz"]
-)
-
-# =========================
-# RESPONSE FUNCTION (DEBUG ENABLED)
-# =========================
-def generate_response(prompt):
-    try:
-        response = model.generate_content(prompt)
-
-        if debug_mode:
-            st.subheader("🔍 Raw API Response")
-            st.write(response)
-
-        return response.text
-
-    except Exception as e:
-        return f"❌ Error: {str(e)}"
+for msg in st.session_state.chat_history:
+    with st.chat_message(msg["role"]):
+        st.write(msg["content"])
 
 # =========================
-# ASK QUESTION
+# USER INPUT
 # =========================
-if option == "Ask Question":
-    query = st.text_input("Ask your question")
+user_input = st.chat_input("Ask something about your notes...")
 
-    if query:
-        prompt = f"""
-        Context:
-        {text_data}
+if user_input:
 
-        Question:
-        {query}
+    # Show user message
+    st.session_state.chat_history.append(
+        {"role": "user", "content": user_input}
+    )
 
-        Answer clearly.
-        """
+    with st.chat_message("user"):
+        st.write(user_input)
 
+    # Build conversation context
+    conversation = ""
+
+    for msg in st.session_state.chat_history[-5:]:
+        conversation += f"{msg['role']}: {msg['content']}\n"
+
+    prompt = f"""
+    You are a helpful AI study assistant.
+
+    Context (from PDF):
+    {text_data}
+
+    Conversation:
+    {conversation}
+
+    Answer clearly and helpfully:
+    """
+
+    # Generate response
+    with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            result = generate_response(prompt)
+            try:
+                response = model.generate_content(prompt)
+                reply = response.text
+            except Exception as e:
+                reply = f"❌ Error: {str(e)}"
 
-        st.subheader("📌 Answer")
-        st.write(result)
+        st.write(reply)
 
-# =========================
-# SUMMARIZE
-# =========================
-elif option == "Summarize":
-    if st.button("Generate Summary"):
-        if not text_data.strip():
-            st.warning("Please upload or enter text.")
-        else:
-            prompt = f"""
-            Summarize this content clearly:
-
-            {text_data}
-            """
-
-            with st.spinner("Generating summary..."):
-                result = generate_response(prompt)
-
-            st.subheader("📄 Summary")
-            st.write(result)
-
-# =========================
-# QUIZ
-# =========================
-elif option == "Generate Quiz":
-    if st.button("Create Quiz"):
-        if not text_data.strip():
-            st.warning("Please upload or enter text.")
-        else:
-            prompt = f"""
-            From this content:
-
-            {text_data}
-
-            Generate 5 quiz questions with answers.
-            """
-
-            with st.spinner("Creating quiz..."):
-                result = generate_response(prompt)
-
-            st.subheader("🧠 Quiz")
-            st.write(result)
+    # Save assistant response
+    st.session_state.chat_history.append(
+        {"role": "assistant", "content": reply}
+    )
