@@ -3,12 +3,13 @@ from PyPDF2 import PdfReader
 from groq import Groq
 
 # =========================
-# PAGE
+# PAGE UI (CENTERED)
 # =========================
 st.set_page_config(page_title="AI Study Assistant", layout="centered")
 st.title("📚 Doc Mind")
 st.subheader("Your Personal AI Study Assistant")
 st.caption("Upload a PDF to get instant answers, summaries, and interactive quizzes powered by AI.")
+
 # =========================
 # LOAD GROQ
 # =========================
@@ -19,25 +20,25 @@ except:
     st.stop()
 
 # =========================
-# FILE UPLOADER (ONLY ONE)
+# CHAT MEMORY
 # =========================
-uploaded_file = st.file_uploader(
-    "Upload PDF",
-    type=["pdf"],
-    key="main_pdf_uploader"
-)
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+# =========================
+# FILE UPLOAD (ONLY ONE)
+# =========================
+uploaded_file = st.file_uploader("Upload PDF", type=["pdf"], key="pdf_main")
 
 text_data = ""
 
 if uploaded_file:
-    with st.spinner("Reading PDF..."):
-        pdf = PdfReader(uploaded_file)
-        for page in pdf.pages:
-            text = page.extract_text()
-            if text:
-                text_data += text
+    pdf = PdfReader(uploaded_file)
+    for page in pdf.pages:
+        text = page.extract_text()
+        if text:
+            text_data += text
 
-# limit size
 text_data = text_data[:6000]
 
 if not text_data.strip():
@@ -58,20 +59,19 @@ def ask_ai(prompt):
             response = client.chat.completions.create(
                 model=m,
                 messages=[
-                    {"role": "system", "content": "You are a helpful AI study assistant."},
+                    {"role": "system", "content": "You are a helpful AI assistant."},
                     {"role": "user", "content": prompt}
                 ]
             )
 
             text = response.choices[0].message.content
-
             if text and len(text.strip()) > 20:
                 return text
 
         except:
             continue
 
-    return None
+    return "❌ AI failed. Try again."
 
 # =========================
 # QUIZ PARSER
@@ -89,19 +89,15 @@ def parse_quiz(text):
             current_q = {"question": line, "options": [], "answer": ""}
 
         elif line.startswith(("A)", "B)", "C)", "D)")):
-            if current_q:
-                current_q["options"].append(line)
+            current_q["options"].append(line)
 
         elif line.lower().startswith("answer"):
-            if current_q:
-                current_q["answer"] = line.split(":")[-1].strip()
+            current_q["answer"] = line.split(":")[-1].strip()
 
     if current_q:
         questions.append(current_q)
 
     return questions
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
 
 # =========================
 # TABS
@@ -109,82 +105,58 @@ if "chat_history" not in st.session_state:
 tab1, tab2, tab3 = st.tabs(["💬 Chat", "📄 Summary", "🧠 Quiz"])
 
 # =========================
-# CHAT
+# CHAT TAB (CHATGPT STYLE)
 # =========================
 with tab1:
-    if st.button("🗑 Clear Chat"):
-    st.session_state.chat_history = []
-    st.rerun()
-    st.subheader("💬 Chat with your document")
 
-    # display chat history
+    col1, col2 = st.columns([8, 1])
+    with col2:
+        if st.button("🗑"):
+            st.session_state.chat_history = []
+            st.rerun()
+
+    # show history
     for msg in st.session_state.chat_history:
-        if msg["role"] == "user":
-            st.markdown(f"**🧑 You:** {msg['content']}")
-        else:
-            st.markdown(f"**🤖 AI:** {msg['content']}")
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
 
-    query = st.text_input("Ask something...", key="chat_input")
+    query = st.chat_input("Ask something about the document...")
 
     if query:
-        # add user message
-        st.session_state.chat_history.append({
-            "role": "user",
-            "content": query
-        })
+        st.session_state.chat_history.append({"role": "user", "content": query})
 
         prompt = f"""
-        Answer clearly based on the document.
+        Answer based on this document:
 
-        DOCUMENT:
         {text_data}
 
-        QUESTION:
+        Question:
         {query}
-
-        Give:
-        - Direct answer
-        - Short explanation
         """
 
         with st.spinner("Thinking..."):
-            result = ask_ai(prompt)
+            response = ask_ai(prompt)
 
-        if result:
-            st.session_state.chat_history.append({
-                "role": "assistant",
-                "content": result
-            })
-        else:
-            st.session_state.chat_history.append({
-                "role": "assistant",
-                "content": "❌ Failed to generate answer"
-            })
+        st.session_state.chat_history.append(
+            {"role": "assistant", "content": response}
+        )
 
         st.rerun()
-        
-     
+
 # =========================
-# SUMMARY
+# SUMMARY TAB
 # =========================
 with tab2:
     if st.button("Generate Summary"):
-        prompt = f"""
-        Summarize the document in bullet points:
-
-        {text_data}
-        """
+        prompt = f"Summarize in bullet points:\n{text_data}"
 
         with st.spinner("Summarizing..."):
             result = ask_ai(prompt)
 
-        if result:
-            st.markdown(result)
-        else:
-            st.error("❌ Failed to generate summary")
+        st.markdown(result)
 
 # =========================
-# QUIZ
+# QUIZ TAB
 # =========================
 with tab3:
 
@@ -195,22 +167,18 @@ with tab3:
 
         quiz_context = text_data[:3000]
 
-        for _ in range(2):  # retry logic
+        for _ in range(2):
             prompt = f"""
-            You are an exam generator.
+            Create EXACTLY 5 MCQs.
 
-            Create EXACTLY 5 multiple choice questions.
+            FORMAT:
 
-            STRICT FORMAT:
-
-            Q1: Question text
+            Q1: Question
             A) Option
             B) Option
             C) Option
             D) Option
             Answer: A
-
-            Repeat for Q2 to Q5.
 
             CONTENT:
             {quiz_context}
@@ -218,55 +186,35 @@ with tab3:
 
             result = ask_ai(prompt)
 
-            if result and "A)" in result and "Q1" in result:
+            if result and "A)" in result:
                 st.session_state.quiz_text = result
                 break
 
         if not st.session_state.quiz_text:
-            st.error("❌ Quiz generation failed. Try again.")
+            st.error("❌ Quiz failed")
 
-    # DISPLAY QUIZ
     if st.session_state.quiz_text:
-
         questions = parse_quiz(st.session_state.quiz_text)
 
-        if not questions:
-            st.error("❌ Quiz parsing failed.")
-        else:
-            st.subheader("🧠 Quiz")
+        user_answers = {}
 
-            user_answers = {}
+        for i, q in enumerate(questions):
+            st.markdown(f"### {q['question']}")
+
+            selected = st.radio(
+                "Select one:",
+                q["options"],
+                key=f"q{i}"
+            )
+
+            user_answers[i] = selected
+
+        if st.button("Submit Quiz"):
+            score = 0
 
             for i, q in enumerate(questions):
-                st.markdown(f"### {q['question']}")
+                if user_answers.get(i, "").startswith(q["answer"]):
+                    score += 1
 
-                if not q["options"]:
-                    st.warning("⚠️ No options found")
-                    continue
-
-                selected = st.radio(
-                    "Select one:",
-                    q["options"],
-                    key=f"q{i}"
-                )
-
-                user_answers[i] = selected
-
-            if st.button("Submit Quiz"):
-                score = 0
-
-                for i, q in enumerate(questions):
-                    if user_answers.get(i, "").startswith(q["answer"]):
-                        score += 1
-
-                total = len(questions)
-                percent = (score / total) * 100
-
-                st.success(f"🏆 Score: {score}/{total} ({percent:.0f}%)")
-
-                if percent >= 80:
-                    st.markdown("🔥 Excellent!")
-                elif percent >= 50:
-                    st.markdown("👍 Good job!")
-                else:
-                    st.markdown("📚 Review the material again.")
+            total = len(questions)
+            st.success(f"🏆 Score: {score}/{total}")
