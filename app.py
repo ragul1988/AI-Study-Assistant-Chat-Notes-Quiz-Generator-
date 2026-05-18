@@ -75,31 +75,39 @@ def summarize_large_pdf(text):
     chunks = split_text(text)
     summaries = []
 
-    for chunk in chunks[:8]:
+    # Step 1: Summarize chunks
+    for chunk in chunks[:6]:  # reduce chunks (important)
         prompt = f"""
-        Summarize in bullet points:
+        Summarize this in 3-5 bullet points:
 
         {chunk}
         """
+
         try:
             response = model.generate_content(prompt)
-            summaries.append(response.text)
+            if response.text:
+                summaries.append(response.text)
         except:
-            summaries.append("⚠️ Error")
+            continue
 
-    combined = "\n".join(summaries)
+    # Step 2: If no summaries
+    if not summaries:
+        return "❌ Could not summarize document."
+
+    # Step 3: Combine safely (shorten input)
+    combined = "\n".join(summaries[:4])  # limit size
 
     final_prompt = f"""
-    Combine into a clear summary:
+    Create a short final summary from these points:
 
     {combined}
     """
 
     try:
         final = model.generate_content(final_prompt)
-        return final.text
-    except:
-        return "❌ Failed summary"
+        return final.text if final.text else "⚠️ Empty summary"
+    except Exception as e:
+        return f"❌ Final summary failed: {str(e)}"
 
 def generate_quiz(text):
     prompt = f"""
