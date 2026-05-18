@@ -54,7 +54,7 @@ def generate_response(prompt):
     }
 
     data = {
-        "model": "openchat/openchat-3.5",  # stable free model
+        "model": "meta-llama/llama-3-8b-instruct",  # stable free model
         "messages": [
             {"role": "user", "content": prompt}
         ]
