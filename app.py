@@ -67,8 +67,7 @@ sentences = [s.strip() for s in text_data.split(".") if len(s) > 20]
 def smart_answer(query):
     query_words = set(preprocess(query))
 
-    best_sentence = ""
-    best_score = 0
+    scored_sentences = []
 
     for sentence in sentences:
         words = set(preprocess(sentence))
@@ -77,16 +76,31 @@ def smart_answer(query):
         density = overlap / (len(words) + 1)
         score = overlap + density
 
-        if score > best_score:
-            best_score = score
-            best_sentence = sentence
+        # filter junk
+        if len(sentence) < 20:
+            continue
+        if sentence.isupper():
+            continue
 
-    if not best_sentence:
+        scored_sentences.append((score, sentence.strip()))
+
+    # sort by relevance
+    scored_sentences.sort(reverse=True)
+
+    # take top 3 sentences
+    top_sentences = [s for _, s in scored_sentences[:3]]
+
+    if not top_sentences:
         return "❌ No relevant answer found."
 
-    keywords = ", ".join(list(query_words)[:4])
+    combined = " ".join(top_sentences)
 
     return f"""
+### 📌 Answer
+{combined}
+
+---
+
 ### 📌 Answer
 {best_sentence.strip()}
 
@@ -130,30 +144,44 @@ def smart_summary():
 def generate_quiz():
     quiz = []
 
+    stop_words = {"the", "of", "in", "and", "to", "a", "is", "for"}
+
     for i, s in enumerate(sentences[:5]):
-        words = preprocess(s)
+        words = s.split()
 
-        if len(words) > 6:
-            answer = words[len(words)//2]
+        # filter meaningful words
+        keywords = [
+            w for w in words
+            if len(w) > 4 and w.lower() not in stop_words
+        ]
 
-            options = [answer]
+        if len(keywords) < 1:
+            continue
 
-            while len(options) < 4:
-                rand_sentence = random.choice(sentences)
-                rand_words = preprocess(rand_sentence)
+        # pick a meaningful keyword
+        answer = keywords[0]
 
-                if rand_words:
-                    w = random.choice(rand_words)
-                    if w not in options:
-                        options.append(w)
+        # generate better distractors
+        distractors = []
+        for other in sentences:
+            for w in other.split():
+                if len(w) > 4 and w.lower() not in stop_words and w != answer:
+                    distractors.append(w)
 
-            random.shuffle(options)
+        options = list(set([answer] + distractors[:10]))[:4]
 
-            quiz.append({
-                "question": f"Q{i+1}: {s.replace(answer, '_____')}",
-                "options": options,
-                "answer": answer
-            })
+        if len(options) < 4:
+            continue
+
+        random.shuffle(options)
+
+        question = s.replace(answer, "_____")
+
+        quiz.append({
+            "question": f"Q{i+1}: {question}",
+            "options": options,
+            "answer": answer
+        })
 
     return quiz
 
