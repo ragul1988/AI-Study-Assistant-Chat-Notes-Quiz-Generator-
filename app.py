@@ -3,8 +3,12 @@ import google.generativeai as genai
 from PyPDF2 import PdfReader
 
 st.set_page_config(page_title="AI Study Assistant", layout="centered")
+st.title("📚 AI Study Assistant (Debug Version)")
 
-st.title("📚 AI Study Assistant")
+# =========================
+# DEBUG TOGGLE
+# =========================
+debug_mode = st.checkbox("Enable Debug Mode")
 
 # =========================
 # LOAD API KEY
@@ -17,21 +21,38 @@ except:
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-model = genai.GenerativeModel("gemini-1.0-pro")
+# =========================
+# LIST AVAILABLE MODELS (DEBUG)
+# =========================
+if debug_mode:
+    st.subheader("🔍 Available Models")
+    try:
+        for m in genai.list_models():
+            if "generateContent" in m.supported_generation_methods:
+                st.write(m.name)
+    except Exception as e:
+        st.write("Error listing models:", e)
+
+# =========================
+# SELECT MODEL
+# =========================
+MODEL_NAME = "models/gemini-1.5-flash"
+
+try:
+    model = genai.GenerativeModel(MODEL_NAME)
+except Exception as e:
+    st.error(f"❌ Model Load Error: {e}")
+    st.stop()
 
 # =========================
 # PDF INPUT
 # =========================
-uploaded_file = st.file_uploader(
-    "Upload PDF (optional)",
-    type=["pdf"]
-)
+uploaded_file = st.file_uploader("Upload PDF (optional)", type=["pdf"])
 
 text_data = ""
 
 if uploaded_file:
     pdf = PdfReader(uploaded_file)
-
     for page in pdf.pages:
         content = page.extract_text()
         if content:
@@ -42,7 +63,6 @@ manual_text = st.text_area("Or paste your notes here:")
 if manual_text:
     text_data = manual_text
 
-# limit size
 text_data = text_data[:10000]
 
 # =========================
@@ -54,12 +74,18 @@ option = st.selectbox(
 )
 
 # =========================
-# RESPONSE FUNCTION
+# RESPONSE FUNCTION (DEBUG ENABLED)
 # =========================
 def generate_response(prompt):
     try:
         response = model.generate_content(prompt)
+
+        if debug_mode:
+            st.subheader("🔍 Raw API Response")
+            st.write(response)
+
         return response.text
+
     except Exception as e:
         return f"❌ Error: {str(e)}"
 
@@ -67,7 +93,6 @@ def generate_response(prompt):
 # ASK QUESTION
 # =========================
 if option == "Ask Question":
-
     query = st.text_input("Ask your question")
 
     if query:
@@ -91,12 +116,9 @@ if option == "Ask Question":
 # SUMMARIZE
 # =========================
 elif option == "Summarize":
-
     if st.button("Generate Summary"):
-
         if not text_data.strip():
             st.warning("Please upload or enter text.")
-
         else:
             prompt = f"""
             Summarize this content clearly:
@@ -114,12 +136,9 @@ elif option == "Summarize":
 # QUIZ
 # =========================
 elif option == "Generate Quiz":
-
     if st.button("Create Quiz"):
-
         if not text_data.strip():
             st.warning("Please upload or enter text.")
-
         else:
             prompt = f"""
             From this content:
