@@ -9,6 +9,16 @@ st.set_page_config(page_title="AI Study Assistant", layout="centered")
 st.title("📚 Doc Mind")
 st.subheader("Your Personal AI Study Assistant")
 st.caption("Upload a PDF to get instant answers, summaries, and interactive quizzes powered by AI.")
+st.markdown("""
+## AIDocMind – AI PDF Assistant
+
+AIDocMind is an AI-powered tool to:
+- Chat with PDF documents
+- Generate summaries
+- Create quizzes with scoring
+
+Built using Groq API and Streamlit.
+""")
 
 # =========================
 # LOAD GROQ
