@@ -42,19 +42,26 @@ if not text_data.strip():
 # AI FUNCTION
 # =========================
 def ask_ai(prompt):
-    try:
-        response = client.chat.completions.create(
-            model="llama3-70b-8192",
-            messages=[
-                {"role": "system", "content": "You are a helpful AI study assistant."},
-                {"role": "user", "content": prompt}
-            ]
-        )
+    models = [
+        "llama3-8b-8192",
+        "mixtral-8x7b-32768"
+    ]
 
-        return response.choices[0].message.content
+    for m in models:
+        try:
+            response = client.chat.completions.create(
+                model=m,
+                messages=[
+                    {"role": "system", "content": "You are a helpful AI study assistant."},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            return response.choices[0].message.content
 
-    except Exception as e:
-        return f"❌ Error: {str(e)}"
+        except Exception as e:
+            continue
+
+    return "❌ All models failed. Try again later."
 
 # =========================
 # UI TABS
