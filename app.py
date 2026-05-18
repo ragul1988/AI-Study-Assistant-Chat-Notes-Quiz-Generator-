@@ -43,7 +43,8 @@ if not text_data.strip():
 # =========================
 def ask_ai(prompt):
     models = [
-        "llama3-8b-8192",
+        "llama-3.1-8b-instant",
+        "llama-3.1-70b-versatile",
         "mixtral-8x7b-32768"
     ]
 
