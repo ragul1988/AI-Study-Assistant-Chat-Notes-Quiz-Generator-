@@ -235,7 +235,8 @@ with tab3:
                 elif percent >= 50:
                     st.markdown("👍 Good job!")
                 else:
-                    st.markdown("📚 Review the material again.")import streamlit as st
+                    st.markdown("📚 Review the material again.")
+import streamlit as st
 from PyPDF2 import PdfReader
 from groq import Groq
 
