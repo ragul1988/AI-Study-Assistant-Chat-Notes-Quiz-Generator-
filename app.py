@@ -112,6 +112,9 @@ tab1, tab2, tab3 = st.tabs(["💬 Chat", "📄 Summary", "🧠 Quiz"])
 # CHAT
 # =========================
 with tab1:
+    if st.button("🗑 Clear Chat"):
+    st.session_state.chat_history = []
+    st.rerun()
     st.subheader("💬 Chat with your document")
 
     # display chat history
@@ -159,9 +162,7 @@ with tab1:
             })
 
         st.rerun()
-        if st.button("🗑 Clear Chat"):
-        st.session_state.chat_history = []
-        st.rerun()
+        
      
 # =========================
 # SUMMARY
