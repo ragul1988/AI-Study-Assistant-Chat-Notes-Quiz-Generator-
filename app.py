@@ -1,5 +1,6 @@
 import streamlit as st
 from PyPDF2 import PdfReader
+import numpy as np
 import random
 
 # =========================
@@ -9,12 +10,12 @@ st.set_page_config(page_title="AI Study Assistant", layout="centered")
 st.title("📚 AI Study Assistant")
 
 # =========================
-# MODE SWITCH
+# TOGGLE AI MODE
 # =========================
-use_ai = st.toggle("⚡ Use AI (better answers, uses quota)", value=False)
+use_ai = st.toggle("⚡ Use AI (better answers, uses API)", value=False)
 
 # =========================
-# LOAD AI (OPTIONAL)
+# LOAD AI MODEL (OPTIONAL)
 # =========================
 model = None
 if use_ai:
@@ -29,8 +30,19 @@ if use_ai:
         model = load_model()
 
     except:
-        st.warning("⚠️ AI not available. Switching to offline mode.")
+        st.warning("⚠️ AI unavailable → using offline mode")
         use_ai = False
+
+# =========================
+# LOAD EMBEDDING MODEL (OFFLINE AI)
+# =========================
+from sentence_transformers import SentenceTransformer
+
+@st.cache_resource
+def load_embedder():
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
+embedder = load_embedder()
 
 # =========================
 # FILE UPLOAD
@@ -46,38 +58,38 @@ if uploaded_file:
         if text:
             text_data += text
 
-text_data = text_data[:10000]
+text_data = text_data[:12000]
 
 if not text_data.strip():
     st.info("📄 Upload a PDF to start")
     st.stop()
 
 # =========================
-# OFFLINE FUNCTIONS
+# BUILD SEMANTIC INDEX
 # =========================
-def simple_qa(query, text):
-    sentences = text.split(".")
-    best = ""
-    max_score = 0
+@st.cache_data
+def build_index(text):
+    sentences = [s.strip() for s in text.split(".") if len(s) > 20]
+    embeddings = embedder.encode(sentences)
+    return sentences, embeddings
 
-    q_words = set(query.lower().split())
+sentences, embeddings = build_index(text_data)
 
-    for sentence in sentences:
-        s_words = set(sentence.lower().split())
-        score = len(q_words & s_words)
+# =========================
+# OFFLINE AI FUNCTIONS
+# =========================
+def semantic_qa(query):
+    query_vec = embedder.encode([query])[0]
+    scores = np.dot(embeddings, query_vec)
+    best_idx = np.argmax(scores)
+    return sentences[best_idx]
 
-        if score > max_score:
-            max_score = score
-            best = sentence
+def semantic_summary():
+    scores = np.mean(embeddings, axis=1)
+    top_idx = np.argsort(scores)[-5:]
+    return ". ".join([sentences[i] for i in top_idx])
 
-    return best if best else "❌ Answer not found"
-
-def simple_summary(text):
-    sentences = text.split(".")
-    return ". ".join(sentences[:8])
-
-def generate_quiz(text):
-    sentences = text.split(".")
+def semantic_quiz():
     quiz = []
 
     for i, s in enumerate(sentences[:5]):
@@ -87,9 +99,12 @@ def generate_quiz(text):
 
             options = [answer]
             while len(options) < 4:
-                w = random.choice(words)
-                if w not in options:
-                    options.append(w)
+                rand_sent = random.choice(sentences)
+                rand_words = rand_sent.split()
+                if rand_words:
+                    w = random.choice(rand_words)
+                    if w not in options:
+                        options.append(w)
 
             random.shuffle(options)
 
@@ -124,10 +139,12 @@ with tab1:
 
     if query:
         if use_ai:
-            prompt = f"""
-            Answer based on this document:
+            context = semantic_qa(query)
 
-            {text_data[:4000]}
+            prompt = f"""
+            Answer using this context:
+
+            {context}
 
             Question:
             {query}
@@ -139,11 +156,11 @@ with tab1:
             if result:
                 st.write(result)
             else:
-                st.warning("⚠️ AI failed → showing offline result")
-                st.write(simple_qa(query, text_data))
+                st.warning("⚠️ AI failed → using offline answer")
+                st.write(context)
 
         else:
-            st.write(simple_qa(query, text_data))
+            st.write(semantic_qa(query))
 
 # =========================
 # SUMMARY
@@ -161,10 +178,10 @@ with tab2:
                 st.write(result)
             else:
                 st.warning("⚠️ AI failed → offline summary")
-                st.write(simple_summary(text_data))
+                st.write(semantic_summary())
 
         else:
-            st.write(simple_summary(text_data))
+            st.write(semantic_summary())
 
 # =========================
 # QUIZ + SCORING
@@ -198,13 +215,13 @@ with tab3:
                 result = safe_ai(prompt)
 
             if result:
-                st.session_state.quiz = generate_quiz(text_data)  # fallback structure
+                st.session_state.quiz = semantic_quiz()
             else:
                 st.warning("⚠️ AI failed → offline quiz")
-                st.session_state.quiz = generate_quiz(text_data)
+                st.session_state.quiz = semantic_quiz()
 
         else:
-            st.session_state.quiz = generate_quiz(text_data)
+            st.session_state.quiz = semantic_quiz()
 
     if st.session_state.quiz:
         st.subheader("🧠 Quiz")
