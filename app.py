@@ -68,7 +68,7 @@ mode = st.radio(
 # =========================
 # UTIL FUNCTIONS
 # =========================
-def split_text(text, chunk_size=1500):
+def split_text(text, chunk_size=1000):
     return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
 
 def summarize_large_pdf(text):
@@ -76,7 +76,7 @@ def summarize_large_pdf(text):
     summaries = []
 
     # Step 1: Summarize chunks
-    for chunk in chunks[:6]:  # reduce chunks (important)
+    for chunk in chunks[:4]:  # reduce chunks (important)
         prompt = f"""
         Summarize this in 3-5 bullet points:
 
@@ -108,6 +108,7 @@ def summarize_large_pdf(text):
         return final.text if final.text else "⚠️ Empty summary"
     except Exception as e:
         return f"❌ Final summary failed: {str(e)}"
+    return "\n\n".join(summaries)
 
 def generate_quiz(text):
     prompt = f"""
