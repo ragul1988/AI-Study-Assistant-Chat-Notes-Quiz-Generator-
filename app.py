@@ -24,26 +24,33 @@ genai.configure(api_key=GEMINI_API_KEY)
 # =========================
 # LIST AVAILABLE MODELS (DEBUG)
 # =========================
-if debug_mode:
-    st.subheader("🔍 Available Models")
-    try:
-        for m in genai.list_models():
-            if "generateContent" in m.supported_generation_methods:
-                st.write(m.name)
-    except Exception as e:
-        st.write("Error listing models:", e)
-
 # =========================
-# SELECT MODEL
+# GET WORKING MODELS
 # =========================
-MODEL_NAME = "models/gemini-1.5-flash"
+available_models = []
 
 try:
-    model = genai.GenerativeModel(MODEL_NAME)
+    for m in genai.list_models():
+        if "generateContent" in m.supported_generation_methods:
+            available_models.append(m.name)
 except Exception as e:
-    st.error(f"❌ Model Load Error: {e}")
+    st.error(f"Error fetching models: {e}")
+
+# =========================
+# SELECT MODEL (DYNAMIC)
+# =========================
+if available_models:
+    selected_model = st.selectbox("Select Model", available_models)
+else:
+    st.error("No compatible models found.")
     st.stop()
 
+# Load model
+try:
+    model = genai.GenerativeModel(selected_model)
+except Exception as e:
+    st.error(f"Model Load Error: {e}")
+    st.stop()
 # =========================
 # PDF INPUT
 # =========================
