@@ -1,9 +1,8 @@
 import streamlit as st
 from PyPDF2 import PdfReader
 from groq import Groq
-from sentence_transformers import SentenceTransformer
-import numpy as np
-import faiss
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 # =========================
 # PAGE UI (CENTERED)
@@ -26,21 +25,12 @@ st.markdown(
 )
 
 # =========================
-# LOAD GROQ
+# GROQ
 # =========================
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 # =========================
-# LOAD EMBEDDING MODEL
-# =========================
-@st.cache_resource
-def load_embed_model():
-    return SentenceTransformer("all-MiniLM-L6-v2")
-
-embed_model = load_embed_model()
-
-# =========================
-# CHAT MEMORY
+# SESSION STATE
 # =========================
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
@@ -70,59 +60,44 @@ if not text_data.strip():
 # =========================
 def chunk_text(text, chunk_size=300):
     words = text.split()
-    chunks = []
-
-    for i in range(0, len(words), chunk_size):
-        chunks.append(" ".join(words[i:i+chunk_size]))
-
-    return chunks
+    return [" ".join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
 
 chunks = chunk_text(text_data)
 
 # =========================
-# CREATE FAISS INDEX
+# TF-IDF RAG
 # =========================
 @st.cache_resource
-def create_index(chunks):
-    embeddings = embed_model.encode(chunks)
-    dim = embeddings.shape[1]
+def build_vectorizer(chunks):
+    vectorizer = TfidfVectorizer()
+    vectors = vectorizer.fit_transform(chunks)
+    return vectorizer, vectors
 
-    index = faiss.IndexFlatL2(dim)
-    index.add(np.array(embeddings))
+vectorizer, chunk_vectors = build_vectorizer(chunks)
 
-    return index
-
-index = create_index(chunks)
-
-# =========================
-# RETRIEVAL
-# =========================
 def retrieve(query, top_k=3):
-    query_vec = embed_model.encode([query])
-    distances, indices = index.search(np.array(query_vec), top_k)
+    query_vec = vectorizer.transform([query])
+    scores = cosine_similarity(query_vec, chunk_vectors)[0]
 
-    results = [chunks[i] for i in indices[0]]
-    return " ".join(results)
+    top_indices = scores.argsort()[-top_k:][::-1]
+    return " ".join([chunks[i] for i in top_indices])
 
 # =========================
-# GROQ AI CALL
+# GROQ CALL
 # =========================
 def ask_ai(prompt):
-    models = [
-        "llama-3.1-8b-instant",
-        "mixtral-8x7b-32768"
-    ]
+    models = ["llama-3.1-8b-instant", "mixtral-8x7b-32768"]
 
     for m in models:
         try:
-            response = client.chat.completions.create(
+            res = client.chat.completions.create(
                 model=m,
                 messages=[
                     {"role": "system", "content": "You are an AI study assistant."},
                     {"role": "user", "content": prompt}
                 ]
             )
-            return response.choices[0].message.content
+            return res.choices[0].message.content
         except:
             continue
 
@@ -132,25 +107,24 @@ def ask_ai(prompt):
 # QUIZ PARSER
 # =========================
 def parse_quiz(text):
-    questions = []
-    current_q = None
+    questions, current = [], None
 
     for line in text.split("\n"):
         line = line.strip()
 
         if line.startswith("Q"):
-            if current_q:
-                questions.append(current_q)
-            current_q = {"question": line, "options": [], "answer": ""}
+            if current:
+                questions.append(current)
+            current = {"question": line, "options": [], "answer": ""}
 
         elif line.startswith(("A)", "B)", "C)", "D)")):
-            current_q["options"].append(line)
+            current["options"].append(line)
 
         elif line.lower().startswith("answer"):
-            current_q["answer"] = line.split(":")[-1].strip()
+            current["answer"] = line.split(":")[-1].strip()
 
-    if current_q:
-        questions.append(current_q)
+    if current:
+        questions.append(current)
 
     return questions
 
@@ -160,7 +134,7 @@ def parse_quiz(text):
 tab1, tab2, tab3 = st.tabs(["💬 Chat", "📄 Summary", "🧠 Quiz"])
 
 # =========================
-# CHAT (RAG + MEMORY)
+# CHAT
 # =========================
 with tab1:
 
@@ -180,7 +154,7 @@ with tab1:
         context = retrieve(query)
 
         prompt = f"""
-        Answer using ONLY this context:
+        Answer ONLY from this context:
 
         {context}
 
@@ -202,7 +176,7 @@ with tab1:
 # =========================
 with tab2:
     if st.button("Generate Summary"):
-        context = retrieve("Summarize document")
+        context = retrieve("summary of document")
 
         prompt = f"Summarize clearly:\n{context}"
 
@@ -220,7 +194,6 @@ with tab3:
         st.session_state.quiz_text = None
 
     if st.button("Generate Quiz"):
-
         context = retrieve("important concepts")
 
         prompt = f"""
@@ -253,17 +226,11 @@ with tab3:
         for i, q in enumerate(questions):
             st.write(q["question"])
 
-            selected = st.radio(
-                "Select one:",
-                q["options"],
-                key=f"q{i}"
-            )
-
+            selected = st.radio("Select one:", q["options"], key=f"q{i}")
             user_answers[i] = selected
 
         if st.button("Submit Quiz"):
             score = 0
-
             for i, q in enumerate(questions):
                 if user_answers.get(i, "").startswith(q["answer"]):
                     score += 1
