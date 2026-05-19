@@ -1,6 +1,9 @@
 import streamlit as st
 from PyPDF2 import PdfReader
 from groq import Groq
+from sentence_transformers import SentenceTransformer
+import numpy as np
+import faiss
 
 # =========================
 # PAGE UI (CENTERED)
@@ -10,9 +13,7 @@ st.title("📚 Doc Mind")
 st.subheader("Your Personal AI Study Assistant")
 st.caption("Upload a PDF to get instant answers, summaries, and interactive quizzes powered by AI.")
 st.markdown("""
-## AIDocMind – AI PDF Assistant
-
-AIDocMind is an AI-powered tool to:
+## DocMind is an AI-powered tool to:
 - Chat with PDF documents
 - Generate summaries
 - Create quizzes with scoring
@@ -23,14 +24,20 @@ st.markdown(
     '<meta name="google-site-verification" content="Mu8rC5XZL81f9FC9zeef-Mx3hYHJPskC1s8ojYtAr2I" />',
     unsafe_allow_html=True
 )
+
 # =========================
 # LOAD GROQ
 # =========================
-try:
-    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-except:
-    st.error("❌ Add GROQ_API_KEY in Streamlit secrets")
-    st.stop()
+client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+
+# =========================
+# LOAD EMBEDDING MODEL
+# =========================
+@st.cache_resource
+def load_embed_model():
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
+embed_model = load_embed_model()
 
 # =========================
 # CHAT MEMORY
@@ -39,27 +46,66 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 # =========================
-# FILE UPLOAD (ONLY ONE)
+# FILE UPLOAD
 # =========================
-uploaded_file = st.file_uploader("Upload PDF", type=["pdf"], key="pdf_main")
+uploaded_file = st.file_uploader("Upload PDF", type=["pdf"], key="pdf")
 
 text_data = ""
 
 if uploaded_file:
     pdf = PdfReader(uploaded_file)
     for page in pdf.pages:
-        text = page.extract_text()
-        if text:
-            text_data += text
+        t = page.extract_text()
+        if t:
+            text_data += t
 
-text_data = text_data[:6000]
+text_data = text_data[:8000]
 
 if not text_data.strip():
-    st.info("📄 Upload a PDF to start")
+    st.info("Upload a PDF to begin")
     st.stop()
 
 # =========================
-# AI FUNCTION
+# CHUNKING
+# =========================
+def chunk_text(text, chunk_size=300):
+    words = text.split()
+    chunks = []
+
+    for i in range(0, len(words), chunk_size):
+        chunks.append(" ".join(words[i:i+chunk_size]))
+
+    return chunks
+
+chunks = chunk_text(text_data)
+
+# =========================
+# CREATE FAISS INDEX
+# =========================
+@st.cache_resource
+def create_index(chunks):
+    embeddings = embed_model.encode(chunks)
+    dim = embeddings.shape[1]
+
+    index = faiss.IndexFlatL2(dim)
+    index.add(np.array(embeddings))
+
+    return index
+
+index = create_index(chunks)
+
+# =========================
+# RETRIEVAL
+# =========================
+def retrieve(query, top_k=3):
+    query_vec = embed_model.encode([query])
+    distances, indices = index.search(np.array(query_vec), top_k)
+
+    results = [chunks[i] for i in indices[0]]
+    return " ".join(results)
+
+# =========================
+# GROQ AI CALL
 # =========================
 def ask_ai(prompt):
     models = [
@@ -72,19 +118,15 @@ def ask_ai(prompt):
             response = client.chat.completions.create(
                 model=m,
                 messages=[
-                    {"role": "system", "content": "You are a helpful AI assistant."},
+                    {"role": "system", "content": "You are an AI study assistant."},
                     {"role": "user", "content": prompt}
                 ]
             )
-
-            text = response.choices[0].message.content
-            if text and len(text.strip()) > 20:
-                return text
-
+            return response.choices[0].message.content
         except:
             continue
 
-    return "❌ AI failed. Try again."
+    return "❌ AI failed."
 
 # =========================
 # QUIZ PARSER
@@ -118,30 +160,29 @@ def parse_quiz(text):
 tab1, tab2, tab3 = st.tabs(["💬 Chat", "📄 Summary", "🧠 Quiz"])
 
 # =========================
-# CHAT TAB (CHATGPT STYLE)
+# CHAT (RAG + MEMORY)
 # =========================
 with tab1:
 
-    col1, col2 = st.columns([8, 1])
-    with col2:
-        if st.button("🗑"):
-            st.session_state.chat_history = []
-            st.rerun()
+    if st.button("Clear Chat"):
+        st.session_state.chat_history = []
+        st.rerun()
 
-    # show history
     for msg in st.session_state.chat_history:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
 
-    query = st.chat_input("Ask something about the document...")
+    query = st.chat_input("Ask about the document...")
 
     if query:
         st.session_state.chat_history.append({"role": "user", "content": query})
 
-        prompt = f"""
-        Answer based on this document:
+        context = retrieve(query)
 
-        {text_data}
+        prompt = f"""
+        Answer using ONLY this context:
+
+        {context}
 
         Question:
         {query}
@@ -157,19 +198,21 @@ with tab1:
         st.rerun()
 
 # =========================
-# SUMMARY TAB
+# SUMMARY
 # =========================
 with tab2:
     if st.button("Generate Summary"):
-        prompt = f"Summarize in bullet points:\n{text_data}"
+        context = retrieve("Summarize document")
+
+        prompt = f"Summarize clearly:\n{context}"
 
         with st.spinner("Summarizing..."):
             result = ask_ai(prompt)
 
-        st.markdown(result)
+        st.write(result)
 
 # =========================
-# QUIZ TAB
+# QUIZ
 # =========================
 with tab3:
 
@@ -178,33 +221,29 @@ with tab3:
 
     if st.button("Generate Quiz"):
 
-        quiz_context = text_data[:3000]
+        context = retrieve("important concepts")
 
-        for _ in range(2):
-            prompt = f"""
-            Create EXACTLY 5 MCQs.
+        prompt = f"""
+        Create 5 MCQs.
 
-            FORMAT:
+        FORMAT:
+        Q1:
+        A)
+        B)
+        C)
+        D)
+        Answer: A
 
-            Q1: Question
-            A) Option
-            B) Option
-            C) Option
-            D) Option
-            Answer: A
+        Content:
+        {context}
+        """
 
-            CONTENT:
-            {quiz_context}
-            """
+        result = ask_ai(prompt)
 
-            result = ask_ai(prompt)
-
-            if result and "A)" in result:
-                st.session_state.quiz_text = result
-                break
-
-        if not st.session_state.quiz_text:
-            st.error("❌ Quiz failed")
+        if result and "A)" in result:
+            st.session_state.quiz_text = result
+        else:
+            st.error("Quiz failed")
 
     if st.session_state.quiz_text:
         questions = parse_quiz(st.session_state.quiz_text)
@@ -212,7 +251,7 @@ with tab3:
         user_answers = {}
 
         for i, q in enumerate(questions):
-            st.markdown(f"### {q['question']}")
+            st.write(q["question"])
 
             selected = st.radio(
                 "Select one:",
@@ -229,5 +268,4 @@ with tab3:
                 if user_answers.get(i, "").startswith(q["answer"]):
                     score += 1
 
-            total = len(questions)
-            st.success(f"🏆 Score: {score}/{total}")
+            st.success(f"Score: {score}/{len(questions)}")
