@@ -190,49 +190,135 @@ with tab2:
 # =========================
 with tab3:
 
+    st.subheader("🧠 Quiz")
+
     if "quiz_text" not in st.session_state:
         st.session_state.quiz_text = None
 
+    # =========================
+    # GENERATE QUIZ
+    # =========================
     if st.button("Generate Quiz"):
-        context = retrieve("important concepts")
+
+        context = retrieve("important concepts from document")
 
         prompt = f"""
-        Create 5 MCQs.
+        Generate EXACTLY 5 multiple choice questions.
+
+        STRICT RULES:
+        - Use EXACT format
+        - Do NOT add explanations
+        - Each question MUST have 4 options
+        - Answer must be one of A/B/C/D
 
         FORMAT:
-        Q1:
-        A)
-        B)
-        C)
-        D)
+
+        Q1: Question text
+        A) Option 1
+        B) Option 2
+        C) Option 3
+        D) Option 4
         Answer: A
 
-        Content:
+        Repeat same format for Q2 to Q5.
+
+        CONTENT:
         {context}
         """
 
-        result = ask_ai(prompt)
+        with st.spinner("Generating quiz..."):
+            result = ask_ai(prompt)
 
         if result and "A)" in result:
             st.session_state.quiz_text = result
         else:
-            st.error("Quiz failed")
+            st.error("❌ Quiz generation failed. Try again.")
 
+    # =========================
+    # DEBUG VIEW (optional)
+    # =========================
     if st.session_state.quiz_text:
+        with st.expander("🔍 Debug: Raw Quiz Output"):
+            st.text_area("Raw Output", st.session_state.quiz_text, height=300)
+
+    # =========================
+    # PARSER (ROBUST)
+    # =========================
+    def parse_quiz(text):
+        questions = []
+        lines = text.split("\n")
+
+        current_q = None
+
+        for line in lines:
+            line = line.strip()
+
+            if line.startswith("Q"):
+                if current_q and len(current_q["options"]) == 4:
+                    questions.append(current_q)
+
+                current_q = {
+                    "question": line,
+                    "options": [],
+                    "answer": ""
+                }
+
+            elif line.startswith(("A)", "B)", "C)", "D)")):
+                if current_q:
+                    current_q["options"].append(line)
+
+            elif line.lower().startswith("answer"):
+                if current_q:
+                    current_q["answer"] = line.split(":")[-1].strip()
+
+        if current_q and len(current_q["options"]) == 4:
+            questions.append(current_q)
+
+        return questions
+
+    # =========================
+    # DISPLAY QUIZ
+    # =========================
+    if st.session_state.quiz_text:
+
         questions = parse_quiz(st.session_state.quiz_text)
 
-        user_answers = {}
+        if not questions:
+            st.error("❌ Quiz parsing failed. Try again.")
+        else:
+            user_answers = {}
 
-        for i, q in enumerate(questions):
-            st.write(q["question"])
-
-            selected = st.radio("Select one:", q["options"], key=f"q{i}")
-            user_answers[i] = selected
-
-        if st.button("Submit Quiz"):
-            score = 0
             for i, q in enumerate(questions):
-                if user_answers.get(i, "").startswith(q["answer"]):
-                    score += 1
+                st.markdown(f"### {q['question']}")
 
-            st.success(f"Score: {score}/{len(questions)}")
+                selected = st.radio(
+                    "Select one:",
+                    q["options"],
+                    key=f"q{i}"
+                )
+
+                user_answers[i] = selected
+
+            # =========================
+            # SUBMIT
+            # =========================
+            if st.button("Submit Quiz"):
+                score = 0
+
+                for i, q in enumerate(questions):
+                    correct = q["answer"]
+
+                    if user_answers.get(i, "").startswith(correct):
+                        score += 1
+
+                total = len(questions)
+                percent = (score / total) * 100
+
+                st.success(f"🏆 Score: {score}/{total} ({percent:.0f}%)")
+
+                if percent >= 80:
+                    st.write("🔥 Excellent!")
+                elif percent >= 50:
+                    st.write("👍 Good job!")
+                else:
+                    st.write("📚 Keep practicing!")
