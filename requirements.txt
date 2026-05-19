@@ -1,6 +1,4 @@
 streamlit==1.32.0
 PyPDF2==3.0.1
 groq
-sentence-transformers==2.2.2
-faiss-cpu==1.7.4
-numpy
+scikit-learn
